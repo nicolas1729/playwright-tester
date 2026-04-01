@@ -1,0 +1,5 @@
+{
+  "name": "Playwright API Tester",
+  "description": "A full-stack web application to test and validate APIs using Playwright's request context and assertions.",
+  "requestFramePermissions": []
+}
