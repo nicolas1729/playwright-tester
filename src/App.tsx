@@ -96,14 +96,14 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
         let errorMessage = `Error ${response.status}: ${response.statusText}`;
         try {
-          const errorJson = JSON.parse(errorText);
+          const errorJson = await response.json();
           errorMessage = errorJson.error || errorMessage;
         } catch (e) {
+          // If 404 and no JSON, likely a routing issue
           if (response.status === 404) {
-            errorMessage = "API endpoint not found (404). Ensure you are accessing the app via port 3000 and not the Vite standalone port.";
+            errorMessage = "API endpoint not found (404). Check your server logs.";
           }
         }
         throw new Error(errorMessage);

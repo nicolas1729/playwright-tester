@@ -16,25 +16,24 @@ async function startServer() {
   app.use(cors());
   app.use(express.json());
 
-  // Logging middleware for debugging local issues
-  app.use((req, res, next) => {
-    if (req.url.startsWith('/api')) {
-      console.log(`[API Request] ${req.method} ${req.url}`);
-    }
-    next();
-  });
-
   // API Route for Playwright Spec Execution
   app.post('/api/run-spec', async (req, res) => {
     const { specCode } = req.body;
+    if (!specCode) {
+      return res.status(400).json({ success: false, error: 'No specCode provided' });
+    }
+    
     const tempDir = path.join(process.cwd(), 'temp_tests');
     
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir);
     }
 
-    const specPath = path.join(tempDir, `test_${Date.now()}.spec.ts`);
-    const configPath = path.join(tempDir, `playwright.config.ts`);
+    const timestamp = Date.now();
+    const specFileName = `test_${timestamp}.spec.ts`;
+    const configFileName = `playwright.config.ts`;
+    const specPath = path.join(tempDir, specFileName);
+    const configPath = path.join(tempDir, configFileName);
 
     // Basic Playwright config
     const playwrightConfig = `
@@ -54,9 +53,10 @@ export default defineConfig({
         fs.writeFileSync(configPath, playwrightConfig);
       }
 
-      // Run playwright test
-      // We use --reporter=json to get structured output
-      const { stdout, stderr } = await execAsync(`npx playwright test ${specPath} --config=${configPath} --reporter=json`, {
+      // Run playwright test using relative paths and setting CWD
+      // This solves pathing issues on Windows where absolute paths with \ can be problematic
+      const { stdout, stderr } = await execAsync(`npx playwright test "${specFileName}" --config="${configFileName}" --reporter=json`, {
+        cwd: tempDir,
         timeout: 30000 // 30s timeout
       }).catch(err => {
         // Playwright exits with non-zero if tests fail, but we still want the JSON
@@ -71,20 +71,34 @@ export default defineConfig({
         throw new Error(`Failed to parse Playwright output: ${stdout || stderr}`);
       }
 
-      // Extract test results and durations
-      const testRuns = results.suites?.[0]?.specs?.flatMap((spec: any) => 
-        spec.tests.map((test: any) => ({
-          name: spec.title,
-          duration: test.results?.[0]?.duration || 0,
-          status: test.results?.[0]?.status || 'unknown',
-          error: test.results?.[0]?.error?.message || null,
-          steps: test.results?.[0]?.steps?.map((step: any) => ({
-            title: step.title,
-            duration: step.duration,
-            category: step.category
-          })) || []
-        }))
-      ) || [];
+      // Recursively extract all test runs from suites
+      const testRuns: any[] = [];
+      const extractTests = (suite: any) => {
+        if (suite.specs) {
+          suite.specs.forEach((spec: any) => {
+            spec.tests.forEach((test: any) => {
+              testRuns.push({
+                name: spec.title,
+                duration: test.results?.[0]?.duration || 0,
+                status: test.results?.[0]?.status || 'unknown',
+                error: test.results?.[0]?.error?.message || null,
+                steps: test.results?.[0]?.steps?.map((step: any) => ({
+                  title: step.title,
+                  duration: step.duration,
+                  category: step.category
+                })) || []
+              });
+            });
+          });
+        }
+        if (suite.suites) {
+          suite.suites.forEach(extractTests);
+        }
+      };
+
+      if (results.suites) {
+        results.suites.forEach(extractTests);
+      }
 
       res.json({
         success: true,
@@ -92,8 +106,10 @@ export default defineConfig({
         raw: results
       });
 
-      // Cleanup
-      fs.unlinkSync(specPath);
+      // Cleanup spec file
+      if (fs.existsSync(specPath)) {
+        fs.unlinkSync(specPath);
+      }
     } catch (error: any) {
       console.error('Playwright Spec Error:', error);
       res.status(500).json({ 
