@@ -95,11 +95,21 @@ export default function App() {
         body: JSON.stringify({ specCode })
       });
 
-      const data = await response.json();
-      
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to execute spec');
+        const errorText = await response.text();
+        let errorMessage = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.error || errorMessage;
+        } catch (e) {
+          if (response.status === 404) {
+            errorMessage = "API endpoint not found (404). Ensure you are accessing the app via port 3000 and not the Vite standalone port.";
+          }
+        }
+        throw new Error(errorMessage);
       }
+
+      const data = await response.json();
 
       setResult(data);
       
