@@ -43,6 +43,7 @@ export default defineConfig({
   reporter: 'json',
   use: {
     baseURL: 'https://jsonplaceholder.typicode.com',
+    ignoreHTTPSErrors: true,
   },
 });
 `;
@@ -125,7 +126,7 @@ export default defineConfig({
   app.post('/api/test', async (req, res) => {
     const { url, method, headers, body, assertions } = req.body;
     try {
-      const requestContext = await request.newContext();
+      const requestContext = await request.newContext({ ignoreHTTPSErrors: true });
       const options: any = { headers: headers || {} };
       if (body && ['POST', 'PUT', 'PATCH'].includes(method)) {
         try { options.data = typeof body === 'string' ? JSON.parse(body) : body; } catch (e) { options.data = body; }
