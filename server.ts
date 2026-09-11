@@ -9,6 +9,32 @@ import { request } from '@playwright/test';
 
 const execAsync = promisify(exec);
 
+const tempDir = path.join(process.cwd(), 'temp_tests');
+const configFileName = 'playwright.config.ts';
+const configPath = path.join(tempDir, configFileName);
+
+// Basic Playwright config
+const playwrightConfig = `
+import { defineConfig } from '@playwright/test';
+export default defineConfig({
+  testDir: '.',
+  reporter: 'json',
+  use: {
+    baseURL: 'https://jsonplaceholder.typicode.com',
+    ignoreHTTPSErrors: true,
+  },
+});
+`;
+
+function ensureTempDir() {
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir);
+  }
+  if (!fs.existsSync(configPath)) {
+    fs.writeFileSync(configPath, playwrightConfig);
+  }
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -22,37 +48,15 @@ async function startServer() {
     if (!specCode) {
       return res.status(400).json({ success: false, error: 'No specCode provided' });
     }
-    
-    const tempDir = path.join(process.cwd(), 'temp_tests');
-    
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir);
-    }
+
+    ensureTempDir();
 
     const timestamp = Date.now();
     const specFileName = `test_${timestamp}.spec.ts`;
-    const configFileName = `playwright.config.ts`;
     const specPath = path.join(tempDir, specFileName);
-    const configPath = path.join(tempDir, configFileName);
-
-    // Basic Playwright config
-    const playwrightConfig = `
-import { defineConfig } from '@playwright/test';
-export default defineConfig({
-  testDir: '.',
-  reporter: 'json',
-  use: {
-    baseURL: 'https://jsonplaceholder.typicode.com',
-    ignoreHTTPSErrors: true,
-  },
-});
-`;
 
     try {
       fs.writeFileSync(specPath, specCode);
-      if (!fs.existsSync(configPath)) {
-        fs.writeFileSync(configPath, playwrightConfig);
-      }
 
       // Run playwright test using relative paths and setting CWD
       // This solves pathing issues on Windows where absolute paths with \ can be problematic
@@ -101,24 +105,29 @@ export default defineConfig({
         results.suites.forEach(extractTests);
       }
 
+      // "success" must reflect whether the tests actually passed, not just
+      // whether the API call completed without throwing.
+      const hasFailingTest = testRuns.some(t => t.status !== 'passed' && t.status !== 'skipped');
+
       res.json({
-        success: true,
+        success: !hasFailingTest,
         testRuns,
         raw: results
       });
-
-      // Cleanup spec file
-      if (fs.existsSync(specPath)) {
-        fs.unlinkSync(specPath);
-      }
     } catch (error: any) {
       console.error('Playwright Spec Error:', error);
-      res.status(500).json({ 
-        success: false, 
+      res.status(500).json({
+        success: false,
         error: error.message,
         details: error.stderr || ''
       });
-      if (fs.existsSync(specPath)) fs.unlinkSync(specPath);
+    } finally {
+      // Cleanup spec file (never touches the response, so it can't crash it)
+      try {
+        if (fs.existsSync(specPath)) fs.unlinkSync(specPath);
+      } catch (cleanupError) {
+        console.error('Failed to clean up spec file:', cleanupError);
+      }
     }
   });
 
@@ -132,16 +141,11 @@ export default defineConfig({
         try { options.data = typeof body === 'string' ? JSON.parse(body) : body; } catch (e) { options.data = body; }
       }
       const startTime = Date.now();
-      let response;
-      switch (method.toUpperCase()) {
-        case 'GET': response = await requestContext.get(url, options); break;
-        case 'POST': response = await requestContext.post(url, options); break;
-        case 'PUT': response = await requestContext.put(url, options); break;
-        case 'DELETE': response = await requestContext.delete(url, options); break;
-        case 'PATCH': response = await requestContext.patch(url, options); break;
-        case 'HEAD': response = await requestContext.head(url, options); break;
-        default: response = await requestContext.get(url, options);
-      }
+      const supportedMethods = ['get', 'post', 'put', 'delete', 'patch', 'head'] as const;
+      const methodKey = supportedMethods.includes((method || '').toLowerCase() as any)
+        ? (method.toLowerCase() as typeof supportedMethods[number])
+        : 'get';
+      const response = await requestContext[methodKey](url, options);
       const duration = Date.now() - startTime;
       const status = response.status();
       const responseHeaders = response.headers();

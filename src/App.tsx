@@ -1,28 +1,17 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Play, 
-  Plus, 
-  Trash2, 
-  Send, 
-  Settings, 
-  Code, 
-  CheckCircle2, 
-  XCircle, 
-  Clock, 
-  Database,
-  ChevronRight,
-  ChevronDown,
-  Copy,
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Play,
+  Settings,
+  CheckCircle2,
+  XCircle,
   Terminal,
   Activity,
   History as HistoryIcon,
-  Layers,
-  Save,
-  PlayCircle,
   AlertCircle,
   FileCode,
   BarChart3,
-  Layout
+  Layout,
+  Download
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -72,15 +61,30 @@ export default function App() {
   const [sidebarTab, setSidebarTab] = useState<'specs' | 'history'>('specs');
   const [error, setError] = useState<string | null>(null);
 
+  // Tracks whether the initial load has completed, so the save effect
+  // below doesn't fire (and clobber saved data) before it has run.
+  const historyLoaded = useRef(false);
+
   // Load history from LocalStorage
   useEffect(() => {
-    const savedHistory = localStorage.getItem('playwright_spec_history');
-    if (savedHistory) setHistory(JSON.parse(savedHistory));
+    try {
+      const savedHistory = localStorage.getItem('playwright_spec_history');
+      if (savedHistory) setHistory(JSON.parse(savedHistory));
+    } catch (e) {
+      console.error('Failed to load spec history:', e);
+    } finally {
+      historyLoaded.current = true;
+    }
   }, []);
 
   // Save history to LocalStorage
   useEffect(() => {
-    localStorage.setItem('playwright_spec_history', JSON.stringify(history));
+    if (!historyLoaded.current) return;
+    try {
+      localStorage.setItem('playwright_spec_history', JSON.stringify(history));
+    } catch (e) {
+      console.error('Failed to save spec history:', e);
+    }
   }, [history]);
 
   const runSpec = async () => {
@@ -112,13 +116,14 @@ export default function App() {
       const data = await response.json();
 
       setResult(data);
-      
-      // Add to history
+
+      // Add to history (drop the bulky raw Playwright JSON, which the UI never reads)
+      const { raw, ...resultForHistory } = data;
       const historyItem: SpecHistoryItem = {
         id: Date.now().toString(),
         timestamp: Date.now(),
         code: specCode,
-        result: data
+        result: resultForHistory
       };
       setHistory(prev => [historyItem, ...prev].slice(0, 20));
     } catch (err: any) {
@@ -136,6 +141,19 @@ export default function App() {
 
   const clearHistory = () => {
     setHistory([]);
+  };
+
+  const exportResultsAsJson = () => {
+    if (!result) return;
+    const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `playwright-results-${Date.now()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -277,6 +295,15 @@ export default function App() {
                     <BarChart3 className="w-4 h-4 text-green-400" />
                     <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-400">Metrics & Results</h2>
                   </div>
+                  {result && (
+                    <button
+                      onClick={exportResultsAsJson}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-gray-400 hover:text-blue-400 hover:bg-gray-800/50 rounded-lg transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Export JSON
+                    </button>
+                  )}
                 </div>
 
                 <div className="flex-1 overflow-auto p-6 space-y-8">
